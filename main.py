@@ -8,11 +8,11 @@ import argparse
 
 par = argparse.ArgumentParser()
 par.add_argument("-p", "--parser", type=str, default='yargy', choices=['yargy', 'natasha', 'rule_based'],
-                    required=True,
-                    help='Select parser')
+                 required=True,
+                 help='Select parser')
 par.add_argument("-d", "--data", type=str, required=True, help='Select data path')
 par.add_argument('-c', '--command', choices=['manager_name', 'company_name', 'manager_stats', 'greetings', 'goodbye',
-                                                'introduce'])
+                                             'introduce', 'ocerall'])
 par.add_argument('-r', '--rules', help='Add rules to models in dict type', default=None)
 args = par.parse_args()
 data = pd.read_csv(args.data)
@@ -39,3 +39,5 @@ elif args.command == 'goodbye':
     print(model.get_greetings_goodbye()[1])
 elif args.command == 'introduce':
     print(model.get_manager_inroduce())
+elif args.command == 'overall':
+    print(model.overall())

@@ -18,17 +18,9 @@ def make_first_lowercase(x):
     return ''.join(x.split()[0].lower()) + ' ' + ' '.join(x.split()[1:])
 
 
-def make_first_lowercase(x):
-    return ''.join(x.split()[0].lower()) + ' ' + ' '.join(x.split()[1:])
-
-
 class Natasha:
-    """
-    Based on natasha.
-    """
-
-    def __init__(self, corpus, path_novec='navec_news_v1_1B_250K_300d_100q.tar',
-                 path_ner='slovnet_ner_news_v1.tar', rules=None, pre_download=True):
+    def __init__(self, corpus, path_novec='navec_news_v1_1B_250K_300d_100q.tar', path_ner='slovnet_ner_news_v1.tar',
+                 rules=None):
         if not rules:
             self.rules = {'greetings': ['здравствуйте', "добрый день",
                                         "привет", "добрый", "приветсвую", "здрасьте"],
@@ -45,7 +37,6 @@ class Natasha:
         self.data = corpus
         self.data['greeting_goodbye'] = None
         self.navec = Navec.load(path_novec)
-        self.pre_download = pre_download
         self.ner = NER.load(path_ner)
         self.ner.navec(self.navec)
         self.data = corpus.copy()
@@ -67,11 +58,11 @@ class Natasha:
         self.d_count = len(self.data.groupby(by='dlg_id'))
         self.dialogs = self.data.groupby(by=['dlg_id', 'role'])
 
-    def _init_silero(self):
-        if not self.pre_download:
+    def _init_silero(self, pre_download=True):
+        if not pre_download:
             torch.hub.download_url_to_file('https://raw.githubusercontent.com/snakers4/silero-models/master/models.yml',
                                            'latest_silero_models.yml',
-                                           progress=True)
+                                           progress=False)
         with open('latest_silero_models.yml', 'r') as yaml_file:
             models = yaml.load(yaml_file, Loader=yaml.SafeLoader)
         model_conf = models.get('te_models').get('latest')
@@ -80,10 +71,6 @@ class Natasha:
         model_dir = "downloaded_model"
         os.makedirs(model_dir, exist_ok=True)
         model_path = os.path.join(model_dir, os.path.basename(model_url))
-        if not os.path.isfile(model_path):
-            torch.hub.download_url_to_file(model_url,
-                                           model_path,
-                                           progress=True)
 
         pack = package.PackageImporter(model_path)
         self.model = pack.load_pickle("te_model", "model")
@@ -93,6 +80,23 @@ class Natasha:
         return self.model.enhance_text(text, lan)
 
     # Получаем имя манагера
+    def get_manager_name(self):
+        for i in range(self.d_count):
+            data = self.dialogs.get_group((i, 'manager'))
+            tmp = data.text
+            string = ' '.join(tmp)
+            markup = self.ner(string)
+            name_spans = [string[x.start:x.stop] for x in markup.spans if
+                          x.type == 'PER' and re.search(f"{'|'.join(self.rules['introduce'])}",
+                                                        string[x.start - 15 if x.start - 15 > 0 else 0:x.stop])]
+            if len(name_spans) > 0:
+                self.manager_name[i] = name_spans[0]
+            else:
+                self.manager_name[i] = None
+        res = pd.DataFrame(self.manager_name.values(),
+                           index=self.manager_name.keys(), columns=['manager_name'])
+        res.index.name = 'dlg_id'
+        return res
 
     # Проверям поздоровался ли манагер
     def fing_greetings(self, dig):
@@ -121,7 +125,7 @@ class Natasha:
         start = [company_name.text.str.lower().str.find(f'{x}').values for x \
                  in self.rules['company_name'] if company_name.text.str.find(f'{x}').values > -1]
 
-        string = company_name.text.str[start[0][0] + 9:].values[0].split()
+        string = company_name.text.str.lower().str[start[0][0] + 9:].values[0].split()
 
         morph = pymorphy2.MorphAnalyzer()
         name = []
@@ -137,6 +141,7 @@ class Natasha:
         make two dataframes: greetings and goodbyes. fill column greeting_goodbye
         return: DataFrame of greetings and DataFrame of goodbyes
         """
+
         for i in range(self.d_count):
             self.greetings[i] = self.fing_greetings(self.dialogs.get_group((i, 'manager')))
             self.goodbye[i] = self.find_goodbye(self.dialogs.get_group((i, 'manager')))
@@ -144,37 +149,26 @@ class Natasha:
                                                       self.goodbye.get(i, []))
             self.data.loc[self.data.dlg_id == i, 'greeting_goodbye'] = is_manager_good(
                 self.greetings.get(i, []), self.goodbye.get(i, []))
-
-        return pd.concat(self.greetings, ignore_index=True)[['dlg_id', 'text']], pd.concat(self.goodbye, \
-                                                                                           ignore_index=True)[
-            ['dlg_id', 'text']]
-
-    def get_manager_name(self):
-        for i in range(self.d_count):
-            data = self.dialogs.get_group((i, 'manager'))
-            tmp = data.text
-            string = ' '.join(tmp)
-            markup = self.ner(string)
-            name_spans = [string[x.start:x.stop] for x in markup.spans if
-                          x.type == 'PER' and re.search(f"{'|'.join(self.rules['introduce'])}",
-                                                        string[x.start - 15 if x.start - 15 > 0 else 0:x.stop])]
-            if len(name_spans) > 0:
-                self.names[i] = name_spans[0]
-            else:
-                self.names[i] = None
-        return pd.DataFrame(self.names.values(),
-                            index=self.names.keys(), columns=['manager_name'])
+        g = pd.concat(self.greetings, ignore_index=True)[['dlg_id', 'text']]
+        g.columns = ['dlg_id', 'greeting']
+        b = pd.concat(self.goodbye, ignore_index=True)[['dlg_id', 'text']]
+        b.columns = ['dlg_id', 'goodbye']
+        return g.set_index('dlg_id'), b.set_index('dlg_id')
 
     def get_manager_inroduce(self):
         for i in range(self.d_count):
             self.manager_introduce[i] = self.find_introduce(self.dialogs.get_group((i, 'manager')))
-        return pd.concat(self.manager_introduce, ignore_index=True)[['dlg_id', 'text']]
+        intro = pd.concat(self.manager_introduce, ignore_index=True)[['dlg_id', 'text']]
+        intro.columns = ['dlg_id', 'introduce']
+        return intro.set_index('dlg_id')
 
     def get_manager_stats(self):
         if len(self.greetings) == 0:
             self.get_greetings_goodbye()
-        return pd.DataFrame(self.geeting_goodbye.values(),
-                            index=self.geeting_goodbye.keys(), columns=['greeting_goodbye'])
+        res = pd.DataFrame(self.geeting_goodbye.values(),
+                           index=self.geeting_goodbye.keys(), columns=['greeting_goodbye'])
+        res.index.name = 'dlg_id'
+        return res
 
     def get_company_name(self):
         for i in range(self.d_count):
@@ -182,5 +176,22 @@ class Natasha:
                 self.company_name[i] = self.find_company(self.dialogs.get_group((i, 'manager')))
             except:
                 self.company_name[i] = None
-        return pd.DataFrame(self.company_name.values(),
-                            index=self.company_name.keys(), columns=['company_name'])
+        res = pd.DataFrame(self.company_name.values(),
+                           index=self.company_name.keys(), columns=['company_name'])
+        res.index.name = 'dlg_id'
+        return res
+
+    def overall(self):
+        g, b = self.get_greetings_goodbye()
+        g = g[~g.index.duplicated(keep='first')]
+        b = b[~b.index.duplicated(keep='first')]
+        i = self.get_manager_inroduce()
+        i = i[~i.index.duplicated(keep='first')]
+        n = self.get_manager_name()
+        c = self.get_company_name()
+        s = self.get_manager_stats()
+        tmp = pd.concat([n, c, s], axis=1)
+        res = pd.merge(tmp, g, left_index=True, right_index=True, how='left')
+        res = pd.merge(res, b, left_index=True, right_index=True, how='left')
+        res = pd.merge(res, i, left_index=True, right_index=True, how='left')
+        return res

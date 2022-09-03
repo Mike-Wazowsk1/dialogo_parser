@@ -13,6 +13,10 @@ def is_manager_good(greetings, goodbye):
 
 
 class Yargyparser:
+    """
+    Based on Yargy rules.
+    """
+
     def __init__(self, data, rules=None):
         if not rules:
             self.rules = {'greetings': ['здравствуйте', "добрый день",
@@ -156,16 +160,32 @@ class Yargyparser:
         name, company = None, None
         for match in self.parser.findall(text):
             if type(match.fact.value.name).__name__ == 'Name':
-                if match.fact.value.name.middle is None:
+                if match.fact.value.name.middle == None:
                     name = ''.join(match.fact.value.name.first)
                 else:
                     name = ' '.join(match.fact.value.name)
             elif type(match.fact.value.name).__name__ == 'Cname':
-                if match.fact.value.name.second is None:
+                if match.fact.value.name.second == None:
                     company = ''.join(match.fact.value.name.title)
                 else:
                     company = ' '.join(match.fact.value.name)
         return name, company
+
+    def get_manager_name(self):
+        for i in range(self.d_count):
+            self.manager_name[i] = self.find_names(self.dialogs.get_group((i, 'manager')))[0]
+        res = pd.DataFrame(self.manager_name.values(),
+                           index=self.manager_name.keys(), columns=['manager_name'])
+        res.index.name = 'dlg_id'
+        return res
+
+    def get_company_name(self):
+        for i in range(self.d_count):
+            self.company_name[i] = self.find_names(self.dialogs.get_group((i, 'manager')))[1]
+        res = pd.DataFrame(self.company_name.values(),
+                           index=self.company_name.keys(), columns=['company_name'])
+        res.index.name = 'dlg_id'
+        return res
 
     def fing_greetings(self, dig):
         manager_greetings = dig[dig.text.str.lower().str.contains('|'. \
@@ -182,7 +202,6 @@ class Yargyparser:
     def find_introduce(self, dig):
         manager_name = dig[dig.text.str.lower().str.contains('|'. \
                                                              join(self.rules['introduce']))]
-
         return manager_name
 
     # Ищем название компании
@@ -204,18 +223,6 @@ class Yargyparser:
                 break
         return ' '.join(name).capitalize()
 
-    def get_manager_name(self):
-        for i in range(self.d_count):
-            self.manager_name[i] = self.find_names(self.dialogs.get_group((i, 'manager')))[0]
-        return pd.DataFrame(self.manager_name.values(),
-                            index=self.manager_name.keys(), columns=['manager_name'])
-
-    def get_company_name(self):
-        for i in range(self.d_count):
-            self.manager_name[i] = self.find_names(self.dialogs.get_group((i, 'manager')))[1]
-        return pd.DataFrame(self.manager_name.values(),
-                            index=self.manager_name.keys(), columns=['manager_name'])
-
     def get_greetings_goodbye(self):
         """
         make two dataframes: greetings and goodbyes. fill column greeting_goodbye
@@ -229,15 +236,38 @@ class Yargyparser:
             self.data.loc[self.data.dlg_id == i, 'greeting_goodbye'] = is_manager_good(
                 self.greetings.get(i, []), self.goodbye.get(i, []))
 
-        return pd.concat(self.greetings, ignore_index=True)[['dlg_id','text']], pd.concat(self.goodbye, ignore_index=True)[['dlg_id','text']]
+        g = pd.concat(self.greetings, ignore_index=True)[['dlg_id', 'text']]
+        g.columns = ['dlg_id', 'greeting']
+        b = pd.concat(self.goodbye, ignore_index=True)[['dlg_id', 'text']]
+        b.columns = ['dlg_id', 'goodbye']
+        return g.set_index('dlg_id'), b.set_index('dlg_id')
 
     def get_manager_inroduce(self):
         for i in range(self.d_count):
             self.manager_introduce[i] = self.find_introduce(self.dialogs.get_group((i, 'manager')))
-        return pd.concat(self.manager_introduce, ignore_index=True)
+        intro = pd.concat(self.manager_introduce, ignore_index=True)[['dlg_id', 'text']]
+        intro.columns = ['dlg_id', 'introduce']
+        return intro.set_index('dlg_id')
 
     def get_manager_stats(self):
         if len(self.greetings) == 0:
             self.get_greetings_goodbye()
-        return pd.DataFrame(self.geeting_goodbye.values(),
-                            index=self.geeting_goodbye.keys(), columns=['greeting_goodbye'])
+        res = pd.DataFrame(self.geeting_goodbye.values(),
+                           index=self.geeting_goodbye.keys(), columns=['greeting_goodbye'])
+        res.index.name = 'dlg_id'
+        return res
+
+    def overall(self):
+        g, b = self.get_greetings_goodbye()
+        g = g[~g.index.duplicated(keep='first')]
+        b = b[~b.index.duplicated(keep='first')]
+        i = self.get_manager_inroduce()
+        i = i[~i.index.duplicated(keep='first')]
+        n = self.get_manager_name()
+        c = self.get_company_name()
+        s = self.get_manager_stats()
+        tmp = pd.concat([n, c, s], axis=1)
+        res = pd.merge(tmp, g, left_index=True, right_index=True, how='left')
+        res = pd.merge(res, b, left_index=True, right_index=True, how='left')
+        res = pd.merge(res, i, left_index=True, right_index=True, how='left')
+        return res

@@ -18,7 +18,6 @@ class RuleBased:
                           'introduce': ['меня зовут', "мое имя", "обращайтесь ко мне",
                                         "можете звать меня", "зовите меня", "называйте меня",
                                         'меня зовут', 'меня', "да это"],
-                          'names': ['ангелина', "дмитрий", "александр", "анастасия"],
                           'company_name': ["компании", "компания", 'компанию'],
                           'goodbye': ['досвидания', "до свидания", "пока",
                                       "всего хоршего", "всего доброго", "прощайте", "всех благ",
@@ -51,13 +50,14 @@ class RuleBased:
                                                                 join(self.rules['goodbye']))]
         return manager_goodbye
 
-    # Ищем имя манагера
-    def find_introduce(self, dig) -> pd.DataFrame:
+    # Ищем где представился манагер
+    def find_introduce(self, dig):
         manager_name = dig[dig.text.str.lower().str.contains('|'. \
                                                              join(self.rules['introduce']))]
 
         return manager_name
 
+    # Ищем имя манагера
     def find_name(self, dig):
         manager_name = dig[dig.text.str.lower().str.contains('|'. \
                                                              join(self.rules['introduce']))][:1]
@@ -91,6 +91,7 @@ class RuleBased:
                 break
         return ' '.join(name).capitalize()
 
+    # Получаем датафрейм здраровонье и прощание
     def get_greetings_goodbye(self):
         """
         make two dataframes: greetings and goodbyes. fill column greeting_goodbye
@@ -104,33 +105,64 @@ class RuleBased:
             self.data.loc[self.data.dlg_id == i, 'greeting_goodbye'] = is_manager_good(
                 self.greetings.get(i, []), self.goodbye.get(i, []))
 
-        return pd.concat(self.greetings, ignore_index=True)[['dlg_id','text']], pd.concat(self.goodbye, ignore_index=True)[['dlg_id','text']]
+        g = pd.concat(self.greetings, ignore_index=True)[['dlg_id', 'text']]
+        g.columns = ['dlg_id', 'greeting']
+        b = pd.concat(self.goodbye, ignore_index=True)[['dlg_id', 'text']]
+        b.columns = ['dlg_id', 'goodbye']
+        return g.set_index('dlg_id'), b.set_index('dlg_id')
 
+    # Получаем датафрейм представления
     def get_manager_inroduce(self):
         for i in range(self.d_count):
             self.manager_introduce[i] = self.find_introduce(self.dialogs.get_group((i, 'manager')))
-        return pd.concat(self.manager_introduce, ignore_index=True)[['dlg_id','text']]
+        intro = pd.concat(self.manager_introduce, ignore_index=True)[['dlg_id', 'text']]
+        intro.columns = ['dlg_id', 'introduce']
+        return intro.set_index('dlg_id')
 
+    # Получаем поздаровался и попрощался ли манагер
     def get_manager_stats(self):
         if len(self.greetings) == 0:
             self.get_greetings_goodbye()
-        return pd.DataFrame(self.geeting_goodbye.values(),
-                            index=self.geeting_goodbye.keys(), columns=['greeting_goodbye'])
+        res = pd.DataFrame(self.geeting_goodbye.values(),
+                           index=self.geeting_goodbye.keys(), columns=['greeting_goodbye'])
+        res.index.name = 'dlg_id'
+        return res
 
+    # Получаем имя манагера
     def get_manager_name(self):
         for i in range(self.d_count):
             try:
                 self.manager_name[i] = self.find_name(self.dialogs.get_group((i, 'manager')))
             except:
                 self.manager_name[i] = None
-        return pd.DataFrame(self.manager_name.values(),
-                            index=self.manager_name.keys(), columns=['manager_name'])
+        res = pd.DataFrame(self.manager_name.values(),
+                           index=self.manager_name.keys(), columns=['manager_name'])
+        res.index.name = 'dlg_id'
+        return res
 
+    # Получаем имя компании
     def get_company_name(self):
         for i in range(self.d_count):
             try:
                 self.company_name[i] = self.find_company(self.dialogs.get_group((i, 'manager')))
             except:
                 self.company_name[i] = None
-        return pd.DataFrame(self.company_name.values(),
-                            index=self.company_name.keys(), columns=['company_name'])
+        res = pd.DataFrame(self.company_name.values(),
+                           index=self.company_name.keys(), columns=['company_name'])
+        res.index.name = 'dlg_id'
+        return res
+
+    def overall(self):
+        g, b = self.get_greetings_goodbye()
+        g = g[~g.index.duplicated(keep='first')]
+        b = b[~b.index.duplicated(keep='first')]
+        i = self.get_manager_inroduce()
+        i = i[~i.index.duplicated(keep='first')]
+        n = self.get_manager_name()
+        c = self.get_company_name()
+        s = self.get_manager_stats()
+        tmp = pd.concat([n, c, s], axis=1)
+        res = pd.merge(tmp, g, left_index=True, right_index=True, how='left')
+        res = pd.merge(res, b, left_index=True, right_index=True, how='left')
+        res = pd.merge(res, i, left_index=True, right_index=True, how='left')
+        return res
