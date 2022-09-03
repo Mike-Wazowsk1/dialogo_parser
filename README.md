@@ -1,5 +1,10 @@
 # dialogo_parser
-parse pd.DataFame with columns [dlg_id,role,text]
+Parse DataFrame with columns:
+* dlg_id
+* role
+* text
+
+Parsers description at [jupyter](https://github.com/Mike-Wazowsk1/dialogo_parser/blob/master/Parsers_info.ipynb)
 
 ## Requirements
 
