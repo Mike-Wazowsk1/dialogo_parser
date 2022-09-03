@@ -18,9 +18,17 @@ def make_first_lowercase(x):
     return ''.join(x.split()[0].lower()) + ' ' + ' '.join(x.split()[1:])
 
 
+def make_first_lowercase(x):
+    return ''.join(x.split()[0].lower()) + ' ' + ' '.join(x.split()[1:])
+
+
 class Natasha:
-    def __init__(self, corpus, path_novec='navec_news_v1_1B_250K_300d_100q.tar', path_ner='slovnet_ner_news_v1.tar',
-                 rules=None):
+    """
+    Based on natasha.
+    """
+
+    def __init__(self, corpus, path_novec='navec_news_v1_1B_250K_300d_100q.tar',
+                 path_ner='slovnet_ner_news_v1.tar', rules=None, pre_download=True):
         if not rules:
             self.rules = {'greetings': ['здравствуйте', "добрый день",
                                         "привет", "добрый", "приветсвую", "здрасьте"],
@@ -37,6 +45,7 @@ class Natasha:
         self.data = corpus
         self.data['greeting_goodbye'] = None
         self.navec = Navec.load(path_novec)
+        self.pre_download = pre_download
         self.ner = NER.load(path_ner)
         self.ner.navec(self.navec)
         self.data = corpus.copy()
@@ -58,11 +67,11 @@ class Natasha:
         self.d_count = len(self.data.groupby(by='dlg_id'))
         self.dialogs = self.data.groupby(by=['dlg_id', 'role'])
 
-    def _init_silero(self, pre_download=True):
-        if not pre_download:
+    def _init_silero(self):
+        if not self.pre_download:
             torch.hub.download_url_to_file('https://raw.githubusercontent.com/snakers4/silero-models/master/models.yml',
                                            'latest_silero_models.yml',
-                                           progress=False)
+                                           progress=True)
         with open('latest_silero_models.yml', 'r') as yaml_file:
             models = yaml.load(yaml_file, Loader=yaml.SafeLoader)
         model_conf = models.get('te_models').get('latest')
@@ -71,16 +80,21 @@ class Natasha:
         model_dir = "downloaded_model"
         os.makedirs(model_dir, exist_ok=True)
         model_path = os.path.join(model_dir, os.path.basename(model_url))
+        if not os.path.isfile(model_path):
+            torch.hub.download_url_to_file(model_url,
+                                           model_path,
+                                           progress=True)
 
         pack = package.PackageImporter(model_path)
         self.model = pack.load_pickle("te_model", "model")
 
+    # Делаем энтити с большой буквы(ОЧЕНЬ долго работает)
     def make_capitalize(self, text, lan='ru'):
         return self.model.enhance_text(text, lan)
 
+    # Получаем имя манагера
 
-        # Проверям поздоровался ли манагер
-
+    # Проверям поздоровался ли манагер
     def fing_greetings(self, dig):
         manager_greetings = dig[dig.text.str.lower().str.contains('|'. \
                                                                   join(self.rules['greetings']))]
@@ -92,7 +106,7 @@ class Natasha:
                                                                 join(self.rules['goodbye']))]
         return manager_goodbye
 
-    # Ищем имя манагера
+    # Ищем поздаровался ли манагер
     def find_introduce(self, dig):
         manager_name = dig[dig.text.str.lower().str.contains('|'. \
                                                              join(self.rules['introduce']))]
@@ -118,6 +132,23 @@ class Natasha:
                 break
         return ' '.join(name).capitalize()
 
+    def get_greetings_goodbye(self):
+        """
+        make two dataframes: greetings and goodbyes. fill column greeting_goodbye
+        return: DataFrame of greetings and DataFrame of goodbyes
+        """
+        for i in range(self.d_count):
+            self.greetings[i] = self.fing_greetings(self.dialogs.get_group((i, 'manager')))
+            self.goodbye[i] = self.find_goodbye(self.dialogs.get_group((i, 'manager')))
+            self.geeting_goodbye[i] = is_manager_good(self.greetings.get(i, []),
+                                                      self.goodbye.get(i, []))
+            self.data.loc[self.data.dlg_id == i, 'greeting_goodbye'] = is_manager_good(
+                self.greetings.get(i, []), self.goodbye.get(i, []))
+
+        return pd.concat(self.greetings, ignore_index=True)[['dlg_id', 'text']], pd.concat(self.goodbye, \
+                                                                                           ignore_index=True)[
+            ['dlg_id', 'text']]
+
     def get_manager_name(self):
         for i in range(self.d_count):
             data = self.dialogs.get_group((i, 'manager'))
@@ -134,25 +165,10 @@ class Natasha:
         return pd.DataFrame(self.names.values(),
                             index=self.names.keys(), columns=['manager_name'])
 
-    def get_greetings_goodbye(self):
-        """
-        make two dataframes: greetings and goodbyes. fill column greeting_goodbye
-        return: DataFrame of greetings and DataFrame of goodbyes
-        """
-        for i in range(self.d_count):
-            self.greetings[i] = self.fing_greetings(self.dialogs.get_group((i, 'manager')))
-            self.goodbye[i] = self.find_goodbye(self.dialogs.get_group((i, 'manager')))
-            self.geeting_goodbye[i] = is_manager_good(self.greetings.get(i, []),
-                                                      self.goodbye.get(i, []))
-            self.data.loc[self.data.dlg_id == i, 'greeting_goodbye'] = is_manager_good(
-                self.greetings.get(i, []), self.goodbye.get(i, []))
-
-        return pd.concat(self.greetings, ignore_index=True)[['dlg_id','text']], pd.concat(self.goodbye, ignore_index=True)[['dlg_id','text']]
-
     def get_manager_inroduce(self):
         for i in range(self.d_count):
             self.manager_introduce[i] = self.find_introduce(self.dialogs.get_group((i, 'manager')))
-        return pd.concat(self.manager_introduce, ignore_index=True)[['dlg_id','text']]
+        return pd.concat(self.manager_introduce, ignore_index=True)[['dlg_id', 'text']]
 
     def get_manager_stats(self):
         if len(self.greetings) == 0:
